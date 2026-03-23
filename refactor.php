@@ -114,33 +114,48 @@ class MyRewriter extends Visitor
 }
 
 
-function format_bloc(String $hash, String $style): void
+function format_bloc(String $hash, String $style): String
 {
-    echo $hash.': {'.PHP_EOL;
+    $out = $hash . ': {' . PHP_EOL;
     foreach (explode(';', $style ) as $line) {
         if (strlen($line) > 0) {
-            echo "    ".$line.';'.PHP_EOL;
+            $out = $out . "    ".$line.';'.PHP_EOL;
         }
     }
-    echo '};'.PHP_EOL;
+    $out = $out . '};' . PHP_EOL;
+
+    return $out;
 }
 
 
 // command line handling
-$shortopts  = "d:i:";
-$longopts   = ["directory:","include::"];
+$shortopts  = "s:t:c:i:";
+$longopts   = ["source:","target:","css::","include::"];
 $options = getopt($shortopts, $longopts);
 
-if (isset($options["d"])) {
-    $directory = $options["d"];
+if (isset($options["s"])) {
+    $source_directory = $options["s"];
 
-} elseif (isset($options["directory"])) {
-    $directory = $options["directory"];
+} elseif (isset($options["source"])) {
+    $source_directory = $options["source"];
 
 } else {
-    echo "Error: directory argument is missing.\n";
+    echo "Error: source directory argument is missing.\n";
     exit(1);
 }
+
+
+if (isset($options["t"])) {
+    $target_directory = $options["t"];
+
+} elseif (isset($options["target"])) {
+    $target_directory = $options["target"];
+
+} else {
+    echo "info: target directory argument is missing, will output on console\n";
+    $target_directory = null;
+}
+
 
 if (isset($options["i"])) {
     $filename_filter = $options["i"];
@@ -152,19 +167,29 @@ if (isset($options["i"])) {
     $filename_filter = ".blade.php";
 }
 
-// main processing loop
-$styles = [];
-if (!is_dir($directory)) {
-    exit('Invalid directory path');
+if (isset($options["c"])) {
+    $target_css = $options["c"];
+
+} elseif (isset($options["css"])) {
+    $target_css = $options["css"];
+
+} else {
+    $target_css = null;
 }
 
-$rii = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($directory));
+
+// main processing loop
+$styles = [];
+if (!is_dir($source_directory)) {
+    exit('Invalid source directory path');
+}
+
+$rii = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($source_directory));
 foreach ($rii as $file) {
     if ($file->isDir()){ 
         continue;
     }
 
-    // if (str_ends_with($file->getPathname(), 'tenant-dashboard.blade.php')) {
     if (str_ends_with($file->getPathname(), $filename_filter)) {
         echo "computing " . $file->getPathname() . PHP_EOL;
         $doc = Forte::parseFile($file->getPathname());
@@ -173,19 +198,44 @@ foreach ($rii as $file) {
         $myRewriter = new MyRewriter($file->getPathname(), $styles);
         $rewriter->addVisitor($myRewriter);
 
-        $newDoc = $rewriter->rewrite($doc);
+        $new_doc = $rewriter->rewrite($doc);
         
         $styles = array_merge($styles, $myRewriter->styles);
 
         echo "style extracted: " . count($styles) . PHP_EOL;
-        // echo $newDoc;
+
+        if (! isset($target_directory)) {
+            echo "=============== UPDATED FILE: " . $file->getPathname() . PHP_EOL;
+            echo $new_doc;
+
+        } else {
+            $new_doc_path = str_replace($source_directory, $target_directory, $file->getPathname());
+            if (!is_dir(dirname($new_doc_path))) {
+                mkdir(dirname($new_doc_path), 0750, true);
+            }
+            file_put_contents($new_doc_path, $new_doc);
+        }
     }
 }
 
+if (! isset($target_directory)) {
+    echo "=============== ALL IN ONE CSS FILE:". PHP_EOL;
+}
+
+$css = "";
 foreach ($styles as $o) {
-    echo PHP_EOL;
+    $header = "";
     foreach ($o['source_files'] as $sf) {
-        echo "// from: " . $sf . PHP_EOL;
+        $header = $header . "// from: " . $sf . PHP_EOL;
     }
-    format_bloc($o['hash'], $o['inline_style']);
+    $css = $css . $header . format_bloc($o['hash'], $o['inline_style']) . PHP_EOL;
+}
+
+if (! isset($target_css)) {
+    echo $css;
+} else {
+    if (!is_dir(dirname($target_css))) {
+        mkdir(dirname($target_css), 0750, true);
+    }
+    file_put_contents($target_css, $css);
 }
