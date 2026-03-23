@@ -126,8 +126,34 @@ function format_bloc(String $hash, String $style): void
 }
 
 
+// command line handling
+$shortopts  = "d:i:";
+$longopts   = ["directory:","include::"];
+$options = getopt($shortopts, $longopts);
+
+if (isset($options["d"])) {
+    $directory = $options["d"];
+
+} elseif (isset($options["directory"])) {
+    $directory = $options["directory"];
+
+} else {
+    echo "Error: directory argument is missing.\n";
+    exit(1);
+}
+
+if (isset($options["i"])) {
+    $filename_filter = $options["i"];
+
+} elseif (isset($options["include"])) {
+    $filename_filter = $options["include"];
+
+} else {
+    $filename_filter = ".blade.php";
+}
+
+// main processing loop
 $styles = [];
-$directory = '/tmp/views';
 if (!is_dir($directory)) {
     exit('Invalid directory path');
 }
@@ -139,7 +165,7 @@ foreach ($rii as $file) {
     }
 
     // if (str_ends_with($file->getPathname(), 'tenant-dashboard.blade.php')) {
-    if (str_ends_with($file->getPathname(), '.blade.php')) {
+    if (str_ends_with($file->getPathname(), $filename_filter)) {
         echo "computing " . $file->getPathname() . PHP_EOL;
         $doc = Forte::parseFile($file->getPathname());
 
