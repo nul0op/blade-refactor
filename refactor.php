@@ -94,12 +94,14 @@ class MyRewriter extends Visitor
                     $this->styles[$hash] = array(
                         'inline_style' => $external_style,
                         'hash' => $hash,
-                        'source_files' => [$this->fp]
+                        'source_files' => array($this->fp)
                     );
 
                 } else {
                     $asf = $this->styles[$hash]['source_files'];
-                    $this->styles[$hash]['source_files'] = array_merge($asf, [$this->fp]);
+                    if (! in_array($this->fp, $asf)) {
+                        $this->styles[$hash]['source_files'] = array_merge($asf, [$this->fp]);
+                    }
                 }
             }
         }
