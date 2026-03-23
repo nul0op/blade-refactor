@@ -1,0 +1,5 @@
+{
+    "require": {
+        "fortephp/forte": "^1.0"
+    }
+}
