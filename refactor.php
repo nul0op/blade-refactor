@@ -25,6 +25,15 @@ class MyRewriter extends Visitor
         $to_keep = [];
         $to_move = [];
 
+        // FIXME: if a complex {{ ; }} as a semicolon inside, it breaks
+        // just keep the whole thing
+        $complex_with_semicolon = '[{{.*;.*}}|{!!.*;.*!!}|{{{.*;.*}}}]';
+        preg_match($complex_with_semicolon, $attribute, $matches);
+        if ($matches) {
+            $to_keep[] = $attribute;
+            return [$to_keep, $to_move];        
+        }
+
         foreach (explode(';', $attribute ) as $line) {
             $complex_regex = '[{{.*}}|{!!.*!!}|{{{.*}}}|@if|@else|@elseif|@endif]';
             preg_match($complex_regex, $line, $matches);
@@ -59,6 +68,7 @@ class MyRewriter extends Visitor
                 $to_move = [];
                 $to_keep = [];
 
+                // FIXME: seems to be buggy with "{{ ($errors->any() || old('nom'))"
                 if ($attribute->hasComplexName()) {
                     // if the key is complex, we cannot do anything
                     continue;
@@ -86,7 +96,7 @@ class MyRewriter extends Visitor
             // add the class pointing to the rest of the style
             if (count($to_move) > 0) {
                 $external_style = implode(';', $to_move) . ';';
-                $hash = md5($external_style);
+                $hash = "H" . md5($external_style);
                 $path->addClass($hash);
 
                 // this given inline style has never been seen
@@ -116,13 +126,13 @@ class MyRewriter extends Visitor
 
 function format_bloc(String $hash, String $style): String
 {
-    $out = $hash . ': {' . PHP_EOL;
+    $out = '.' . $hash . ' {' . PHP_EOL;
     foreach (explode(';', $style ) as $line) {
         if (strlen($line) > 0) {
             $out = $out . "    ".$line.';'.PHP_EOL;
         }
     }
-    $out = $out . '};' . PHP_EOL;
+    $out = $out . '}' . PHP_EOL;
 
     return $out;
 }
@@ -226,7 +236,7 @@ $css = "";
 foreach ($styles as $o) {
     $header = "";
     foreach ($o['source_files'] as $sf) {
-        $header = $header . "// from: " . $sf . PHP_EOL;
+        $header = $header . "/* from: " . $sf . "*/" . PHP_EOL;
     }
     $css = $css . $header . format_bloc($o['hash'], $o['inline_style']) . PHP_EOL;
 }
