@@ -13,11 +13,13 @@ use Forte\Rewriting\Builders\Builder;
 const MODE_DUMP_CSS = 1;
 const MODE_DUMP_TAG = 2;
 const MODE_REPLACE_TAG = 3;
+const MODE_REMOVE_TAG = 4;
 
 $verbose = false;
 $print_oneline = false;
 $dump_tag = "";                             # tag name to dump (case insensitive)
 $replace_tag = "";                          # string to replace with. can be " "
+$remove_tag = "";                           # string to replace with. can be " "
 $replace_map = null;                        # kv for the replacement part
 $mode = MODE_DUMP_CSS;                      # default to dump inline css attributes
 
@@ -71,6 +73,7 @@ class MyRewriter extends Visitor
     {
         global $mode;
         global $dump_tag;
+        global $remove_tag;
         global $replace_val;
         global $replace_map;
 
@@ -82,6 +85,11 @@ class MyRewriter extends Visitor
                 $html = $path->asElement()->innerContent;
                 $this->tags = [preg_replace('/\>\s+\</m', '><', $html)];
                 // $this->tags[] = $html;
+            }
+
+        } else if ($mode == MODE_REMOVE_TAG) {
+            if ($path->asElement()->tagNameText() == $remove_tag) {
+                $path->remove();
             }
 
         } else if ($mode == MODE_REPLACE_TAG) {
@@ -278,7 +286,7 @@ function format_bloc(String $hash, String $style): String
 
 // command line handling
 $shortopts  = "s:t:c:i:1::d:v::r:";
-$longopts   = ["source:","target:","css::","include::","oneline::","dump-tag:","verbose","replace"];
+$longopts   = ["source:","target:","css::","include::","oneline::","dump-tag:","verbose","replace:","remove-tag:"];
 $options = getopt($shortopts, $longopts);
 
 if (isset($options["v"]) || isset($options["verbose"])) {
@@ -363,6 +371,12 @@ if (isset($options["r"]) || isset($options["replace"])) {
     }
 }
 
+if (isset($options["remove-tag"])) {
+    $mode = MODE_REMOVE_TAG;
+    $remove_tag = $options["remove-tag"];
+    
+}
+
 // main processing loop
 $styles = [];
 $tags = [];
@@ -407,6 +421,18 @@ foreach ($rii as $file) {
             // echo $new_doc;
 
         } else if ($mode == MODE_REPLACE_TAG) {
+            $myRewriter = new MyRewriter($file->getPathname(), $tags);
+            $rewriter->addVisitor($myRewriter);
+
+            $new_doc = $rewriter->rewrite($doc);
+            $new_doc_path = str_replace($source_directory, $target_directory, $file->getPathname());
+
+            if (!is_dir(dirname($new_doc_path))) {
+                mkdir(dirname($new_doc_path), 0750, true);
+            }
+            file_put_contents($new_doc_path, $new_doc);
+
+        } else if ($mode == MODE_REMOVE_TAG) {
             $myRewriter = new MyRewriter($file->getPathname(), $tags);
             $rewriter->addVisitor($myRewriter);
 
