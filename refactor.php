@@ -12,9 +12,14 @@ use Forte\Rewriting\Builders\Builder;
 
 const MODE_DUMP_CSS = 1;
 const MODE_DUMP_TAG = 2;
+const MODE_REPLACE_TAG = 3;
 
 $verbose = false;
-
+$print_oneline = false;
+$dump_tag = "";                             # tag name to dump (case insensitive)
+$replace_tag = "";                          # string to replace with. can be " "
+$replace_map = null;                        # kv for the replacement part
+$mode = MODE_DUMP_CSS;                      # default to dump inline css attributes
 
 class MyRewriter extends Visitor
 {
@@ -62,21 +67,55 @@ class MyRewriter extends Visitor
         return [$to_keep, $to_move];
     }
 
-
     public function enter(NodePath $path): void
     {
         global $mode;
+        global $dump_tag;
+        global $replace_val;
+        global $replace_map;
 
         if (! $path->isElement()) return;
 
         if ($mode == MODE_DUMP_TAG) {
-            if ($path->asElement()->tagNameText() == 'svg') {
-                $html = trim($path->asElement()->render());
+            if ($path->asElement()->tagNameText() == $dump_tag) {
+                // $html = $path->asElement()->render();
+                $html = $path->asElement()->innerContent;
                 $this->tags = [preg_replace('/\>\s+\</m', '><', $html)];
+                // $this->tags[] = $html;
             }
 
-            $ne = Builder::element('p')->text('FUCK IT');
-            $path->appendChild($ne);
+        } else if ($mode == MODE_REPLACE_TAG) {
+            if ($path->asElement()->tagNameText() == $dump_tag) {
+                $needle = normalize_html($path->asElement()->render());
+
+                // FIXME: during the render(), a blank is added between end of payload and the closing tag "xx />"
+                // make sure we also have here. perhaps a bug upstream in phpforte since it advertise verbatim copy from input ... 
+                if (substr($needle, -3) !== ' />') {
+                    $needle = substr($needle, 0, -2) . ' />';
+                }
+                feedback("DEBUG: looking for [" . $needle . "] in mapping array" . PHP_EOL);
+
+                $needle_found = array_key_exists($needle, $replace_map);
+                if (!$needle_found) { feedback("WARNING: needle not found in mapping" . PHP_EOL); }
+
+                // path = NodePath
+                // $path->parent() = ElementNode
+                // ce qu'il faut => NodePath::replaceWith()
+                if ($path->parentPath() instanceof ElementNode) { 
+                    $current_class = $path->parentPath()->getAttribute('class'); 
+                } else {
+                    $current_class = null;
+                }
+
+                $ne = Builder::raw(
+                    $needle_found ? "$replace_map[$needle]" : "no-mapping-not-found: [$needle] </p>"
+                );
+
+                $path->parentPath()->replaceWith($ne);
+                if ($current_class) { 
+                    $path->setAttribute('class', $current_class);
+                };
+            }
 
         } else if ($path->hasAttribute('style')) {
             // get some context
@@ -191,6 +230,22 @@ class MyRewriter extends Visitor
     }
 }
 
+function normalize_html($html): String
+{
+    $html = preg_replace(
+        '/\n/m', '', 
+        $html
+    );
+    $html = preg_replace(
+        '/\>\s+\</m', '><', 
+        $html
+    );
+    return preg_replace(
+        '/\s\s+\\s/m', '><', 
+        $html
+    );
+}
+
 function feedback(String $str): void
 {
     global $verbose;
@@ -222,28 +277,21 @@ function format_bloc(String $hash, String $style): String
 
 
 // command line handling
-$shortopts  = "s:t:c:i:1::d::v::";
-$longopts   = ["source:","target:","css::","include::","oneline::","dump-tag","verbose"];
+$shortopts  = "s:t:c:i:1::d:v::r:";
+$longopts   = ["source:","target:","css::","include::","oneline::","dump-tag:","verbose","replace"];
 $options = getopt($shortopts, $longopts);
-$mode = MODE_DUMP_CSS;
 
-if (isset($options["v"])) {
+if (isset($options["v"]) || isset($options["verbose"])) {
     $verbose = true;
-
-} elseif (isset($options["verbose"])) {
-    $verbose = true;
-
+    feedback("INFO: verbose mode requested" . PHP_EOL);
 }
 
-if (isset($options["s"])) {
-    $source_directory = $options["s"];
-
-} elseif (isset($options["source"])) {
-    $source_directory = $options["source"];
+if (isset($options["s"]) || isset($options["source"])) {
+    $source_directory = $options["s"] ?: isset($options["source"]);
+    is_dir($source_directory) ?: die('FATAL: Invalid source directory path' . PHP_EOL);
 
 } else {
-    echo "Error: source directory argument is missing.\n";
-    exit(1);
+    die("FATAL: source directory argument is missing" . PHP_EOL);
 }
 
 
@@ -254,7 +302,7 @@ if (isset($options["t"])) {
     $target_directory = $options["target"];
 
 } else {
-    feedback("info: target directory argument is missing, will output on console\n");
+    feedback("INFO: no target directory argument, will output to console" . PHP_EOL);
     $target_directory = null;
 }
 
@@ -280,13 +328,10 @@ if (isset($options["1"])) {
     $print_oneline = false;
 }
 
-if (isset($options["d"])) {
+if (isset($options["d"]) || isset($options["dump-tag"])) {
     $mode = MODE_DUMP_TAG;
-
-} elseif (isset($options["dump"])) {
-    $mode = MODE_DUMP_TAG;
+    $dump_tag = $options["d"] ?: $options["dump-tag"];
 }
-
 
 if (isset($options["c"])) {
     $target_css = $options["c"];
@@ -298,13 +343,29 @@ if (isset($options["c"])) {
     $target_css = null;
 }
 
+if (isset($options["r"]) || isset($options["replace"])) {
+    $mode = MODE_REPLACE_TAG;
+    $replace_val = $options["r"] ?: $options["replace"];
+
+    if (is_file($replace_val)) {
+        $handle = fopen($replace_val, 'r');
+        $i = 0;
+        while (( $line = fgetcsv($handle, null, ';', '"', '\\')) !== FALSE) {
+            $i++;
+            (!$line[0] || !$line[1]) && die("FATAL: malformed csv on line $i of $replace_val file" . PHP_EOL);
+            $key = trim($line[1]);
+            $val = trim($line[0]);
+            $replace_map[$key] = $val;
+        }
+
+    } else {
+        $replace_map = [ $dump_tag => $replace_val ];
+    }
+}
 
 // main processing loop
 $styles = [];
 $tags = [];
-if (!is_dir($source_directory)) {
-    exit('Invalid source directory path');
-}
 
 $rii = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($source_directory));
 foreach ($rii as $file) {
@@ -343,7 +404,19 @@ foreach ($rii as $file) {
 
             $new_doc = $rewriter->rewrite($doc);
             $tags = array_merge($tags, $myRewriter->tags);
-            echo $new_doc;
+            // echo $new_doc;
+
+        } else if ($mode == MODE_REPLACE_TAG) {
+            $myRewriter = new MyRewriter($file->getPathname(), $tags);
+            $rewriter->addVisitor($myRewriter);
+
+            $new_doc = $rewriter->rewrite($doc);
+            $new_doc_path = str_replace($source_directory, $target_directory, $file->getPathname());
+
+            if (!is_dir(dirname($new_doc_path))) {
+                mkdir(dirname($new_doc_path), 0750, true);
+            }
+            file_put_contents($new_doc_path, $new_doc);
 
         }
         unset($myRewriter);
@@ -380,8 +453,13 @@ if ($mode == MODE_DUMP_CSS) {
         file_put_contents($target_css, $css);
     }
 
-} else {
+} else if ($mode == MODE_DUMP_TAG) {
     foreach($tags as $tag) {
         echo "$tag" . PHP_EOL;
     }
+
+} else if ($mode == MODE_REPLACE_TAG) {
+    // foreach($tags as $tag) {
+    //     echo "$tag" . PHP_EOL;
+    // }
 }
